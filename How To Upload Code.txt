@@ -1,22 +1,28 @@
 SETUP INSTRUCTIONS (ARDUINO + TEENSY)
 
+BRANCH AND HARDWARE SAFETY
+
+main is frozen. Do not change or push main without explicit owner permission.
+Develop on dev. Compiling is not permission to upload to the robot.
+Disconnect motor power during initial USB checks. Only perform an intentional
+upload or powered test after checking the selected sketch, mode, and wiring.
+
 1. Install Required Software
 
-• Install Arduino IDE
 Download and install the Arduino IDE.
 
-• Install Teensy Board Support (Teensyduino)
-Download and install Teensyduino. This adds Teensy boards to the Arduino IDE.
+For Arduino IDE 2, add this URL in Preferences / Additional Boards Manager URLs:
+https://www.pjrc.com/teensy/package_teensy_index.json
+Install Teensy board support using Boards Manager.
+The dev consolidation was compile-checked with version 1.62.0.
 
-2. After installing:
+2. Select the board
 
-Open Arduino IDE
+Open Arduino IDE and select Tools > Board > Teensy 4.1.
+Use Tools > Port to select the connected Teensy, not a Bluetooth serial port.
+The COM number can change when reconnecting.
 
-Go to Tools → Board
-
-Select “Teensy 4.1” (or your correct Teensy board)
-
-Install Required Libraries
+3. Install Required Libraries
 
 Install the following libraries in Arduino (use Library Manager or place them inside Documents/Arduino/libraries):
 
@@ -28,16 +34,34 @@ Adafruit_TCS34725
 Adafruit_Unified_Sensor
 Pixy2 * Needs to be externally installed. File is within the Libraries Folder
 
+Use the repository's Libraries folder, not both Libraries and Libraries copy.
+The optional time-of-flight prototype additionally needs Pololu VL53L0X.
 After installing all libraries, restart the Arduino IDE.
 
-Running the Code
+4. Choose ONE entry point
 
-• Open ONLY the main .ino file
-• Connect the Teensy
-• Select the correct board (Tools → Board → Teensy 4.1)
-• Click Upload
+A. BallTracker\BallTracker.ino
+   Latest April 10 rewrite. Serial Monitor: 115200 baud.
+   TEST_MODE defaults to 4: ball tracking WITHOUT white-line avoidance.
+   Mode 0 adds color avoidance; mode 1 prints IR angles without drive commands.
+   Modes 2, 3, and 5 are motor/direction/color tests and can also move the robot.
+   Preserved pursuit speed is 160. Check the actual constants, not old comments.
 
-You only need to run the main file.
+B. src\main\main.ino
+   Original modular firmware with the April 8 updates.
+   Serial Monitor: 9600 baud.
+
+C. src\main\components\camera\camera.ino
+   Standalone Pixy2 example, separate from the ball-tracking firmware.
+
+Open only the chosen sketch, not both robot implementations together.
+Compile first. Click Upload only when you deliberately intend to replace the
+firmware on the connected board.
+
+USB detection does not identify the source revision already flashed on the
+robot. The consolidation did not upload any firmware.
+See README.md for compile-only commands, retained features, and known issues
+in the experimental Python, kicker, and time-of-flight code.
 
 ***IMPORTANT***
 

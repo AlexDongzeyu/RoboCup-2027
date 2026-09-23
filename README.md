@@ -1,10 +1,118 @@
-# RoboCup-Junior-2026
+# RoboCup 2027
+
+## Branch policy
+
+**`main` is frozen. Do not commit, merge, rebase, reset, or push changes to
+`main` unless the repository owner explicitly authorizes it. Use `dev` for
+development and integration.**
+
+The September 23, 2026 consolidation started from a clean local checkout of
+`main` at `68078e4`, which was also the original `dev` tip. Newer local editor
+checkpoints had the same file tree, not additional unpublished code.
+
+| Original branch | Preserved tip | Contents |
+| --- | --- | --- |
+| `main` / original `dev` | `68078e4` (April 1) | Original modular firmware, libraries, examples, and Python tools |
+| `new-changes` | `e4e5db4` (April 8) | IR sampling/buffer fixes, angle filtering, compass zeroing, bounded color startup, movement updates, and IR simulation |
+| `good-changes-works` | `86bd9a6` (April 10) | Earlier BallTracker rewrite and its merge history |
+| `New-Changes---New-Code---Working` | `5b613ff` (April 10) | Latest BallTracker pursuit speed and smooth orbit/deadzone tuning |
+
+All of these commits are ancestors of `dev`; consolidation used real merges,
+not squashes or file replacement. Deleting the three superseded branch names
+does not remove their code or history. No robot control behavior was changed
+during consolidation.
+
+## Choosing firmware
+
+The rewrite has a separate Git history and different angle/motor conventions.
+Both implementations are retained as **separate sketches**, not combined into
+one control loop.
+
+| Sketch | Purpose | Serial baud | Compile check |
+| --- | --- | --- | --- |
+| [BallTracker](BallTracker/BallTracker.ino) | Latest April 10 firmware: IR tracking, heading hold, motor control, and selectable color avoidance/diagnostics | 115200 | Passed |
+| [Original firmware](src/main/main.ino) | April 8 modular implementation, including its IR, compass, color, and movement updates | 9600 | Passed |
+| [Camera example](src/main/components/camera/camera.ino) | Standalone Pixy2 SPI object-tracking example | USB serial | Passed |
+
+The checks above used Teensy 4.1 board support `teensy:avr@1.62.0` on Windows
+on September 23, 2026. BallTracker has existing unused-variable warnings; the
+camera example has an existing constructor-initialization-order warning.
+Compilation does **not** establish correct wiring, sensor calibration, motor
+direction, or on-field behavior. No firmware was uploaded and no motor
+commands were sent. USB discovery identifies the board model, not the source
+revision currently flashed onto it.
+
+### BallTracker modes
+
+Select `TEST_MODE` in [BallTracker.ino](BallTracker/BallTracker.ino) before
+building. The preserved default is **4**, with `basePursueSpeed = 160`.
+
+| Mode | Behavior |
+| --- | --- |
+| 0 | Ball tracking, compass heading hold, and white-line avoidance |
+| 1 | IR angle diagnostics without drive commands |
+| 2 | Cardinal-direction motor test |
+| 3 | Constant east drive for tuning |
+| 4 | Ball tracking and heading hold; **white-line avoidance is disabled** |
+| 5 | Color-sensor diagnostics and avoidance movement |
+
+Modes other than 1 can drive the robot. Do not treat the default ball-only
+mode as a competition-ready configuration. Keep motor power disconnected
+for initial USB checks and verify the selected mode and wiring before any
+intentional upload or powered test. The two firmware versions retain their
+own sensor and motor mappings; do not interchange those mappings blindly.
+
+### Retained experimental code and known limitations
+
+- The camera, kicker, and time-of-flight modules are preserved but are not
+  integrated into either current ball-tracking entry point.
+- The [Python visualizer](src/python/ir-emulator.py) and
+  [serial reader](src/python/reading_serial_monitor.py) pass syntax checks
+  but still use a hard-coded macOS port. An isolated test of the existing
+  parser produced 32 values from a 16-value historical payload and raised
+  `ValueError` for both current firmware output formats. They need port and
+  protocol fixes before use; merely selecting a Windows COM port is not
+  sufficient.
+- The unused [kicker prototype](src/main/components/kicker/kicker.h) fails a
+  standalone compiler syntax check because its class definition is missing
+  the terminating semicolon. It is retained unchanged, not silently counted
+  as a working feature.
+- The [time-of-flight prototype](src/main/components/tof/tof.h) needs the
+  additional Pololu `VL53L0X` library, which is not bundled. It was not
+  hardware-tested.
+- The explicitly scrapped [Component prototype](src/main/components/components.h)
+  and its implementation remain archival, not part of the verified builds.
+- Use [Libraries](Libraries) for the builds below. The rewrite's
+  [Libraries copy](Libraries%20copy) directory is retained for preservation,
+  not as a second library search path. Its editor configuration also retains
+  the original Mac-specific compiler path; that is not the firmware toolchain.
+
+### Compile without uploading
+
+From the repository root, with `arduino-cli` on `PATH`:
+
+```powershell
+arduino-cli core install teensy:avr@1.62.0 --additional-urls https://www.pjrc.com/teensy/package_teensy_index.json
+arduino-cli compile --fqbn teensy:avr:teensy41 --build-property "recipe.hooks.postbuild.1.pattern=" --libraries ".\Libraries" ".\BallTracker"
+arduino-cli compile --fqbn teensy:avr:teensy41 --build-property "recipe.hooks.postbuild.1.pattern=" --libraries ".\Libraries" ".\src\main"
+arduino-cli compile --fqbn teensy:avr:teensy41 --build-property "recipe.hooks.postbuild.1.pattern=" --libraries ".\Libraries" ".\src\main\components\camera"
+```
+
+The empty post-build hook prevents the Teensy Loader from being launched by
+these compile-only checks. It does not modify the installed board package.
+Arduino IDE also bundles `arduino-cli.exe` under
+`resources\app\lib\backend\resources` in its installation directory.
+See [upload instructions](How%20To%20Upload%20Code.txt) before an intentional
+hardware upload.
 
 ## What is RoboCup Junior?
 
 RoboCup Junior is an international robotics competition that encourages students to design, build, and program autonomous robots to complete specific challenges. In the Soccer division, robots must detect, chase, and kick a ball into a goal while avoiding opponents and staying within the field boundaries. It’s a fast-paced, dynamic event that tests engineering, coding, and problem-solving skills under real-time constraints.
 
-This repository contains the codebase for our custom-built soccer-playing robot, developed for the RoboCup Junior 2025 season. The robot is designed to navigate the field intelligently, track a ball, avoid boundaries, and interact with objects using a combination of sensors, motors, and algorithms.
+This repository contains the codebase for our custom-built soccer-playing robot,
+including the original 2025/2026 components and the later BallTracker rewrite.
+The component descriptions below are a reference to retained code, not a claim
+that every component is enabled in the current firmware.
 
 ## Overview
 
@@ -102,22 +210,30 @@ Used for debugging and visualization.
 
 ### Setup
 	1.	Wire all components according to the wiring diagram (see src/main).
-	2.	Upload main.ino to the Teensy board via the Arduino IDE.
-	3.	Launch Python scripts (optional) for debugging and visualization.
+	2.	Choose one sketch from the firmware table above and verify its mode and hardware mapping before intentionally uploading it to the Teensy.
+	3.	Use Serial Monitor at that sketch's baud rate. The retained Python visualizer needs the fixes described above before it can consume the current output.
 
 ### Initialization (setup())
-	•	Initializes all modules: IR, Color Sensor, Compass, Camera, Motors.
+	•	The ball-tracking sketches initialize IR, color sensors, compass, and motors. Camera, kicker, and time-of-flight are not initialized by these entry points.
 
 ### Main Loop (loop())
 	1.	Use IR to locate the ball.
-	2.	Use the camera to orient toward the goal.
-	3.	Move accordingly while checking for white boundary lines.
-	4.	Kick when aligned with the ball and goal.
+	2.	Use compass heading correction while moving toward or orbiting the ball.
+	3.	Apply white-line avoidance in the original firmware or BallTracker mode 0; BallTracker mode 4 deliberately ignores it.
+	4.	The camera and kicker remain separate modules, not active steps in these loops.
 
 
 
 ## File Structure
 ```
+BallTracker/
+  BallTracker.ino
+  ColorSensor.cpp / ColorSensor.h
+  IRRing.cpp / IRRing.h
+  RobotCompass.cpp / RobotCompass.h
+  RobotMotors.cpp / RobotMotors.h
+Libraries/
+Libraries copy/
 src/
   main/
     main.ino
