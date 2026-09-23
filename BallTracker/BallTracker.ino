@@ -45,7 +45,7 @@ const int TEST_MODE = 4;
 //    - Performance Note: At speeds > 150, you may need to reduce
 //      kP_Rotation (e.g. 0.4) to maintain smooth movement.
 // ============================================================
-int basePursueSpeed = 180;           // The target translation power (PWM) for normal ball chasing.
+int basePursueSpeed = 160;           // The target translation power (PWM) for normal ball chasing.
 const float kP_Rotation = 0.5f;      // Proportional gain for compass correction. Higher = snappier rotation.
 const float HEADING_DEADZONE = 7.0f; // Compass error threshold (degrees) before rotation correction kicks in.
 const float ANGLE_SMOOTH_ALPHA = 0.15f; // Alpha for low-pass angle filter. Lower = smoother/slower, Higher = twitchier/faster.
@@ -273,8 +273,13 @@ void normalLoop() {
     if (angError > 180.0f)
       angError -= 360.0f;
 
-    float baseOffset = angError * 0.8f;
-    baseOffset = constrain(baseOffset, -50.0f, 50.0f);
+    float baseOffset = 0.0f;
+    if (fabsf(angError) > 20.0f) {
+      // Smooth start: subtract deadzone so it doesn't suddenly jump
+      float activeError = angError > 0 ? angError - 20.0f : angError + 20.0f;
+      baseOffset = activeError * 1.2f;
+      baseOffset = constrain(baseOffset, -100.0f, 100.0f);
+    }
 
     float damp = 1.0f - ((rawStrength - 80.0f) / 170.0f);
     damp = constrain(damp, 0.0f, 1.0f);
@@ -385,9 +390,11 @@ void ballOnlyLoop() {
     // Without this, tiny sensor noise flips the offset sign every few ms,
     // causing the robot to jitter left/right instead of going straight.
     float baseOffset = 0.0f;
-    if (fabsf(angError) > 15.0f) {
-      baseOffset = angError * 0.8f;
-      baseOffset = constrain(baseOffset, -50.0f, 50.0f);
+    if (fabsf(angError) > 20.0f) {
+      // Smooth start: subtract deadzone so it doesn't suddenly jump
+      float activeError = angError > 0 ? angError - 20.0f : angError + 20.0f;
+      baseOffset = activeError * 1.2f;
+      baseOffset = constrain(baseOffset, -100.0f, 100.0f);
     }
 
     float damp = 1.0f - ((rawStrength - 80.0f) / 170.0f);
