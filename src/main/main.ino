@@ -1,69 +1,143 @@
-#include "./components/IR/IR.h"
-#include "./components/IR/IR.cpp"
-#include "./components/movement/movement.h"
-#include "./components/movement/movement.cpp"
-#include "./components/colorsensor/colorsensor.h"
-#include "./components/colorsensor/colorsensor.cpp"
+#include <Arduino.h>
+#include "IR.h"
+#include "movement.h"
+#include "colorsensor.h"
+#include "camera.h"
+#include "kicker.h"
+#include "tof.h"
+
 
 Movement m;
 IR ir;
 ColorSensor c;
-Compass cmp;
+Camera cam(70.0);
+Kicker kicker(3, 100);
+TOF tof;
 
-void attack_ball() {
-  int speed = 40;
 
-  // First update color sensors so white border always has priority
+enum RobotState {
+  SEARCH_BALL,
+  ATTACK_BALL,
+  AVOID_BORDER,
+  ATTACK_GOAL,
+  KICK
+};
+
+RobotState state = SEARCH_BALL;
+
+// 非阻塞定时器
+unsigned long lastLoopTime = 0;
+const int LOOP_INTERVAL_MS = 20;   // 50Hz
+
+// 串口打印节流
+unsigned long lastPrintTime = 0;
+const int PRINT_INTERVAL_MS = 200;
+
+// 速度常量
+const int SPEED_SLOW = 30;
+const int SPEED_NORMAL = 50;
+const int SPEED_FAST = 70;
+
+
+void updateRobot() {
   c.updateReadings();
   float avoidAngle = c.getAvoidAngle();
-
-  // If white border is detected, do NOT chase the ball
   if (avoidAngle != -1) {
-    Serial.print("White detected! Avoid angle: ");
-    Serial.println(avoidAngle);
-
-    m.basic_move_with_compass(avoidAngle, speed);
+    state = AVOID_BORDER;
+    m.basic_move_with_compass(avoidAngle, SPEED_SLOW);
     return;
   }
 
-  // Otherwise do the normal IR ball chasing
   ir.updateReadings();
   float ballAngle = ir.getBallAngle();
 
-  float* vals = ir.getReadingsArr();
-  for (int i = 0; i < NUM_IR_PINS; i++) {
-    Serial.print(i);
-    Serial.print(":");
-    Serial.print(vals[i], 2);
-    Serial.print("  ");
+  switch (state) {
+    case SEARCH_BALL:
+      if (ballAngle != -1) {
+        state = ATTACK_BALL;
+      } else {
+        m.rotate(SPEED_SLOW);
+      }
+      break;
+
+    case ATTACK_BALL: {
+      if (ballAngle == -1) {
+        state = SEARCH_BALL;
+        m.brake();
+        break;
+      }
+
+      float camAngle = cam.calculateRotationAngle();
+      int ballRange = tof.GetBallRange();
+
+      if (ballRange > 0 && ballRange < 80 && camAngle != 999.0) {
+        state = ATTACK_GOAL;
+        break;
+      }
+
+      m.basic_move_with_compass(ballAngle, SPEED_NORMAL);
+      break;
+    }
+
+    case ATTACK_GOAL: {
+      float camAngle = cam.calculateRotationAngle();
+      if (camAngle == 999.0) {
+        state = ATTACK_BALL;
+        break;
+      }
+      m.basic_move_with_compass_and_camera(ballAngle, SPEED_SLOW, camAngle);
+
+      int ballRange = tof.GetBallRange();
+      if (ballRange > 0 && ballRange < 50) {
+        state = KICK;
+      }
+      break;
+    }
+
+    case KICK:
+      kicker.performKick();
+      delay(200);
+      state = SEARCH_BALL;
+      break;
+
+    case AVOID_BORDER:
+      if (avoidAngle == -1) {
+        state = SEARCH_BALL;
+      }
+      break;
   }
-  Serial.println();
-
-  Serial.print("Ball angle: ");
-  Serial.println(ballAngle);
-
-  if (ballAngle == -1) {
-    m.brake();
-    Serial.println("No ball detected");
-    return;
-  }
-
-  m.basic_move_with_compass(ballAngle, speed);
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
+  while (!Serial) {}
 
   ir.initIR();
   m.initMovement();
   c.init();
+  cam.initialize();
+  kicker.init();
+  tof.initialize();
 
-  // Add this back only if your movement code needs compass initialized
-  // cmp.initialize();
+  Serial.println("Robot ready.");
 }
 
 void loop() {
-  attack_ball();
+  unsigned long now = millis();
+  if (now - lastLoopTime < LOOP_INTERVAL_MS) return;
+  lastLoopTime = now;
+
+  updateRobot();
+
+  if (now - lastPrintTime > PRINT_INTERVAL_MS) {
+    lastPrintTime = now;
+    Serial.print("State: ");
+    Serial.print(state);
+    Serial.print(" | BallAngle: ");
+    Serial.print(ir.getBallAngle());
+    Serial.print(" | Avoid: ");
+    Serial.println(c.getAvoidAngle());
+  }
 }
 
 // #include <Wire.h>

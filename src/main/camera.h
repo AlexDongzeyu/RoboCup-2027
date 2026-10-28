@@ -3,7 +3,6 @@
 
 //Kyle Andersen 2025
 
-
 class Camera {
 private:
   Pixy2SPI_SS pixy;
@@ -12,22 +11,22 @@ private:
   float fov;
   int32_t frameWidth;
 
-  //needs to be configured everytime
   const float knownWidthOfObject = 530.0;
   const float referenceDistance = 1000.0;
   float focalLength;
 
 public:
   Camera(float fieldOfView, int32_t threshold = 50)
-    : fov(fieldOfView), middleThreshold(threshold) {}
+    : middleThreshold(threshold), fov(fieldOfView) {}
 
   void initialize() {
     Serial.println("camera initialization begun");
     pixy.init();
     frameWidth = pixy.frameWidth;
     centerX = frameWidth / 2;
+    
+    focalLength = 500.0; 
 
-    // Calculate focal length using known reference values
     pixy.ccc.getBlocks();
     if (pixy.ccc.numBlocks > 0) {
       int detectedWidth = pixy.ccc.blocks[0].m_width;
@@ -37,7 +36,6 @@ public:
     }
     Serial.println("camera initialization finished");
   }
-
 
   String detectDirection() {
     pixy.ccc.getBlocks();
@@ -61,9 +59,8 @@ public:
     return 999;
   }
 
-
   float calculateRotationAngle() {
-    pixy.ccc.getBlocks();  // Continuously update the blocks
+    pixy.ccc.getBlocks();
     if (pixy.ccc.numBlocks > 0) {
       int midX = pixy.ccc.blocks[0].m_x;
       float anglePerPixel = fov / frameWidth;

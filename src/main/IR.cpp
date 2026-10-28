@@ -1,10 +1,9 @@
+#include <Arduino.h>
 #include "IR.h"
 #include <limits.h>
+#include <math.h>
 
-int pins[] = {23, 24, 25, 26, 27, 38, 39, 40, 41, 14, 15, 18, 19, 20, 21, 22}; //{23, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 16, 17, 20, 21, 22};
-const int NUM_IR_PINS = 16;
-
-double readings[NUM_IR_PINS];
+int pins[] = {23, 24, 25, 26, 27, 38, 39, 40, 41, 14, 15, 18, 19, 20, 21, 22};
 
 void IR::initIR() {
   for (unsigned int i = 0; i < arrayLength(pins); i++) {
@@ -17,59 +16,36 @@ void IR::updateReadings() {
   double maxVal = INT_MIN;
 
   for (int i = 0; i < NUM_IR_PINS; i++) {
-    double pwReading = pulseIn(pins[i], HIGH, 800);
-    if (pwReading != 0 && pwReading < minVal) minVal = pwReading;
-    if (pwReading > maxVal) maxVal = pwReading;
-  }
-
-  if (minVal == INT_MAX || maxVal == INT_MIN) {
-    for (int i = 0; i < NUM_IR_PINS; i++) {
-      readings[i] = 0;
-    }
-  }
-
-  double range = maxVal - minVal;
-  for (int i = 0; i < NUM_IR_PINS; i++) {
-    double pwReading = pulseIn(pins[i], HIGH, 800);
-    if (pwReading == 0) {
-      readings[i] = 0;
-    }
-    else {
-      readings[i] = (float)(1 - ((pwReading - minVal) / range));
-    }
-  }
-}
-
-float* IR::getReadingsArr() {
-  double* pwReadings = getPWsArr();
-  float* pinReadings = new float[NUM_IR_PINS];
-
-  double minVal = INT_MAX;
-  double maxVal = INT_MIN;
-
-  for (int i = 0; i < NUM_IR_PINS; i++) {
+    pwReadings[i] = pulseIn(pins[i], HIGH, 800);
     if (pwReadings[i] != 0 && pwReadings[i] < minVal) minVal = pwReadings[i];
     if (pwReadings[i] > maxVal) maxVal = pwReadings[i];
   }
 
   if (minVal == INT_MAX || maxVal == INT_MIN) {
     for (int i = 0; i < NUM_IR_PINS; i++) {
-      pinReadings[i] = 0;
+      readings[i] = 0;
     }
-    return pinReadings;
+    return;
   }
 
   double range = maxVal - minVal;
+  if (range == 0) range = 1; 
+
   for (int i = 0; i < NUM_IR_PINS; i++) {
     if (pwReadings[i] == 0) {
-      pinReadings[i] = 0;
-    }
-    else {
-      pinReadings[i] = (float)(1 - ((pwReadings[i] - minVal) / range));
+      readings[i] = 0;
+    } else {
+      readings[i] = (float)(1 - ((pwReadings[i] - minVal) / range));
     }
   }
+}
 
-  return pinReadings;
+float* IR::getReadingsArr() {
+  return readings;
+}
+
+double* IR::getPWsArr() {
+  return pwReadings;
 }
 
 float IR::getBallAngle() {
@@ -81,7 +57,6 @@ float IR::getBallAngle() {
 
   for (int i = 0; i < n; i++) {
     float weight = readings[i];
-
     if (weight <= 0.0) continue;
 
     float angleRad = (-i * 2.0 * M_PI) / n;
@@ -96,19 +71,9 @@ float IR::getBallAngle() {
 
   float angle = atan2(weightedY, weightedX) * 180.0 / M_PI;
   if (angle < 0) angle += 360.0;
-
-  // angle += 30;   // adjust this value as needed
   if (angle >= 360.0) angle -= 360.0;
 
   return angle;
-}
-
-double* IR::getPWsArr() {
-  double* pinReadings = new double[NUM_IR_PINS];
-  for (unsigned int i = 0; i < arrayLength(pins); i++) {
-    pinReadings[i] = pulseIn(pins[i], HIGH, 800);
-  }
-  return pinReadings;
 }
 
 // void IR::printReadingsArr() {

@@ -1,4 +1,5 @@
 #include "components.h"
+#include <Arduino.h>
 
 Component::Component(int pin_numbers[], uint8_t modes[], int number_of_pins, String component_name)
 {

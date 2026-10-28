@@ -1,5 +1,5 @@
+#include <Arduino.h>
 #include <cmath>  // for fabs(), isnan()
-#include "WString.h"
 #include "movement.h"
 #include <math.h>
 
