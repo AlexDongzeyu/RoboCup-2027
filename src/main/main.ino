@@ -1,183 +1,204 @@
-#include "./components/IR/IR.h"
-#include "./components/IR/IR.cpp"
-#include "./components/movement/movement.h"
-#include "./components/movement/movement.cpp"
-#include "./components/colorsensor/colorsensor.h"
-#include "./components/colorsensor/colorsensor.cpp"
+#include <Arduino.h>
+#include <stdio.h>
+#include "src/IR/IR.h"
+#include "src/motor/motor.h"
+#include "src/movement/movement.h"
 
-Movement m;
+// Bench uploads can start paused; ordinary Arduino uploads remain automatic.
+#ifndef START_PAUSED
+#define START_PAUSED 0
+#endif
+
 IR ir;
-ColorSensor c;
-Compass cmp;
+Motors motors;
+Tracker tracker;
+bool running = !START_PAUSED;
+bool starting = true;
+uint32_t bootAt = 0;
+uint32_t lastUpdate = 0;
+const char* stopReason = "STOPPED";
 
-void attack_ball() {
-  int speed = 40;
+void stopTracking(const char* reason) {
+  running = false;
+  stopReason = reason;
+  tracker.reset();
+  motors.stop();
+}
 
-  // First update color sensors so white border always has priority
-  c.updateReadings();
-  float avoidAngle = c.getAvoidAngle();
+void scheduleTracking() {
+  motors.stop();
+  tracker.reset();
+  running = true;
+  starting = true;
+  bootAt = lastUpdate = millis();
+  stopReason = "STOPPED";
+  Serial.println("Run:STARTING_IN_2_SECONDS. Keep clear; s stops.");
+}
 
-  // If white border is detected, do NOT chase the ball
-  if (avoidAngle != -1) {
-    Serial.print("White detected! Avoid angle: ");
-    Serial.println(avoidAngle);
-
-    m.basic_move_with_compass(avoidAngle, speed);
-    return;
+void printReading(const BallReading& ball, const DriveCommand& drive) {
+  char line[416];
+  int motorPwm[4];
+  motors.signedPwm(motorPwm);
+  const char* state = !running ? stopReason
+                     : starting ? "STARTING"
+                     : drive.state == DriveState::BriefHold ? "PUSH_HOLD"
+                     : !ball.detected ? (ball.strength >= IR::MIN_DUTY ? "NO_DIRECTION" : "NO_BALL")
+                     : !drive.ready ? "ACQUIRING"
+                     : drive.state == DriveState::Aligning ? "ALIGNING" : "TRACKING";
+  int length;
+  if (ball.detected) {
+    float displayAngle = fmodf(roundf(ball.degrees * 10.0f) / 10.0f, 360.0f);
+    length = snprintf(line, sizeof(line),
+        "Angle:%.1f Raw:%.1f Zero:%.1f Cal:%s Error:%.1f Signal:%.3f Contrast:%.3f Quality:%.2f Sensor:%d Forward:%.1f Turn:%.1f AppliedF:%.1f AppliedT:%.1f PWM:%d/255 Limit:%d M1:%d M2:%d M3:%d M4:%d State:%s FW:IR11-PURSUIT\n",
+        displayAngle, ball.rawDegrees, ir.holderZero(), ir.calibrationState(),
+        drive.error, ball.strength, ball.contrast, ball.coherence, ball.sensor,
+        drive.forward, drive.turn, motors.appliedForwardPwm(), motors.appliedTurnPwm(),
+        motors.maxAppliedPwm(), Motors::MAX_WHEEL_PWM,
+        motorPwm[0], motorPwm[1], motorPwm[2], motorPwm[3], state);
+  } else {
+    length = snprintf(line, sizeof(line),
+        "Angle:none Zero:%.1f Cal:%s Signal:%.3f Contrast:%.3f Quality:%.2f Reason:%s Forward:%.1f Turn:%.1f AppliedF:%.1f AppliedT:%.1f PWM:%d/255 Limit:%d M1:%d M2:%d M3:%d M4:%d State:%s FW:IR11-PURSUIT\n",
+        ir.holderZero(), ir.calibrationState(), ball.strength, ball.contrast, ball.coherence, ball.reason,
+        drive.forward, drive.turn, motors.appliedForwardPwm(), motors.appliedTurnPwm(),
+        motors.maxAppliedPwm(), Motors::MAX_WHEEL_PWM,
+        motorPwm[0], motorPwm[1], motorPwm[2], motorPwm[3], state);
   }
-
-  // Otherwise do the normal IR ball chasing
-  ir.updateReadings();
-  float ballAngle = ir.getBallAngle();
-
-  float* vals = ir.getReadingsArr();
-  for (int i = 0; i < NUM_IR_PINS; i++) {
-    Serial.print(i);
-    Serial.print(":");
-    Serial.print(vals[i], 2);
-    Serial.print("  ");
+  // Never let a slow serial reader delay a stop.
+  if (Serial && length > 0 && length < static_cast<int>(sizeof(line)) &&
+      Serial.availableForWrite() >= length) {
+    Serial.write(reinterpret_cast<const uint8_t*>(line), length);
   }
-  Serial.println();
+}
 
-  Serial.print("Ball angle: ");
-  Serial.println(ballAngle);
-
-  if (ballAngle == -1) {
-    m.brake();
-    Serial.println("No ball detected");
-    return;
+bool abortRequested() {
+  while (Serial.available()) {
+    int ch = Serial.read();
+    if (ch != '\r' && ch != '\n' && ch != ' ' && ch != '\t') {
+      motors.stop();
+      Serial.println("MotorTest:CANCELLED.");
+      return true;
+    }
   }
+  return false;
+}
 
-  m.basic_move_with_compass(ballAngle, speed);
+bool runMotorSelfTest() {
+  // Raised-wheel hardware verification: M1..M4 individually, then CW spin, then Forward drive.
+  Serial.println("MotorTest:STARTING_IN_2_SECONDS. RAISE ALL WHEELS; s aborts.");
+  uint32_t t0 = millis();
+  while (millis() - t0 < 2000) {
+    if (abortRequested()) return false;
+    delay(10);
+  }
+  const int channelSign[4] = {1, -1, -1, 1}; // Forward polarity per channel in mixer space
+  for (int ch = 0; ch < 4; ++ch) {
+    Serial.print("MotorTest:CHANNEL_M");
+    Serial.println(ch + 1);
+    t0 = millis();
+    while (millis() - t0 < 450) {
+      if (abortRequested()) return false;
+      motors.testChannel(ch, 90 * channelSign[ch]);
+      delay(20);
+    }
+    motors.stop();
+    delay(250);
+  }
+  Serial.println("MotorTest:CLOCKWISE_TURN");
+  t0 = millis();
+  while (millis() - t0 < 500) {
+    if (abortRequested()) return false;
+    motors.drive(0, 80);
+    delay(20);
+  }
+  motors.stop();
+  delay(300);
+  Serial.println("MotorTest:STRAIGHT_FORWARD");
+  t0 = millis();
+  while (millis() - t0 < 500) {
+    if (abortRequested()) return false;
+    motors.drive(120, 0);
+    delay(20);
+  }
+  motors.stop();
+  Serial.println("MotorTest:DONE. Stopped; send r to resume tracking.");
+  return true;
 }
 
 void setup() {
-  Serial.begin(9600);
-
-  ir.initIR();
-  m.initMovement();
-  c.init();
-
-  // Add this back only if your movement code needs compass initialized
-  // cmp.initialize();
+  motors.begin();
+  Serial.begin(115200);
+  ir.begin();
+  running = !START_PAUSED && ir.readyForPursuit();
+  stopReason = "STOPPED";
+  starting = true;
+  bootAt = lastUpdate = millis();
+  tracker.reset();
 }
 
 void loop() {
-  attack_ball();
+  // Auto-starts after 2s; s stops, r/g runs, z calibrates holder zero, t runs raised-wheel test.
+  for (int i = 0; i < 32 && Serial.available(); ++i) {
+    char rawCmd = Serial.read();
+    char command = (rawCmd >= 'A' && rawCmd <= 'Z') ? static_cast<char>(rawCmd - 'A' + 'a') : rawCmd;
+    if (command == 's') {
+      stopTracking("STOPPED");
+    } else if (command == 'r' || command == 'g') {
+      scheduleTracking();
+    } else if (command == 'z') {
+      bool wasRunning = running;
+      stopTracking("CALIBRATING");
+      bool saved = ir.calibrateHolder();
+      bool stopped = ir.calibrationCancelled();
+      while (Serial.available()) {
+        int ch = Serial.read();
+        if (ch == 's' || ch == 'S') stopped = true;
+      }
+      if (!stopped && (saved || wasRunning)) {
+        scheduleTracking();
+      } else {
+        stopReason = stopped ? "STOPPED" : "CALIBRATION_FAILED";
+      }
+      lastUpdate = millis();
+      return;
+    } else if (command == 't') {
+      stopTracking("MOTOR_TEST");
+      runMotorSelfTest();
+      stopTracking("STOPPED");
+      lastUpdate = millis();
+      return;
+    } else if (command != '\r' && command != '\n' && command != ' ' && command != '\t') {
+      // Never kill active autonomous tracking on a stray serial byte.
+      Serial.println("INFO: commands are s (stop), r or g (run), z (calibrate holder), t (raised-wheel test).");
+    }
+  }
+  uint32_t now = millis();
+  if (starting && now - bootAt >= 2000) starting = false;
+  if (now - lastUpdate < 20) return;
+  if (now - lastUpdate > 100) {
+    // Discard stale commands, then recover from fresh readings without rearming.
+    motors.stop();
+    tracker.reset();
+  }
+  lastUpdate = now;
+
+  BallReading ball = ir.read();
+  DriveCommand drive = tracker.update(ball, running && !starting, millis());
+  if (!drive.ready) motors.stop();
+  else if (drive.state == DriveState::BriefHold) {
+    if (drive.forward > 0) motors.holdStraight(static_cast<int>(lroundf(drive.forward)));
+    else motors.holdTurn();
+  }
+  else motors.drive(drive.forward, drive.turn);
+
+  // The first readings are printed while stopped, before movement is allowed.
+  static uint32_t lastPrint = 0;
+  if (now - lastPrint >= 100 || tracker.samples() == 1) {
+    printReading(ball, drive);
+    lastPrint = now;
+  }
+  static uint32_t lastDiagnostics = 0;
+  if ((!running || !ball.detected) && now - lastDiagnostics >= 1000) {
+    ir.printDiagnostics();
+    lastDiagnostics = now;
+  }
 }
-
-// #include <Wire.h>
-// #include "Adafruit_TCS34725.h"
-
-// #define TCA_ADDR 0x70
-// #define TCS_ADDR 0x29
-// #define NUM_SENSORS 8
-
-// Adafruit_TCS34725 tcs = Adafruit_TCS34725(
-//   TCS34725_INTEGRATIONTIME_50MS,
-//   TCS34725_GAIN_4X
-// );
-
-// uint16_t greenValues[NUM_SENSORS];
-// uint16_t clearValues[NUM_SENSORS];
-// uint16_t redValues[NUM_SENSORS];
-// uint16_t blueValues[NUM_SENSORS];
-
-// void tcaSelect(uint8_t channel) {
-//   if (channel > 7) return;
-
-//   Wire1.beginTransmission(TCA_ADDR);
-//   Wire1.write(1 << channel);
-//   Wire1.endTransmission();
-// }
-
-// bool i2cDetect(uint8_t addr) {
-//   Wire1.beginTransmission(addr);
-//   return (Wire1.endTransmission() == 0);
-// }
-
-// void setup() {
-//   Serial.begin(9600);
-//   while (!Serial) {}
-
-//   Wire1.begin();
-
-//   Serial.println("=== COLOR SENSOR CHANNEL TEST ===");
-//   Serial.println("This will print CH0 to CH7.");
-//   Serial.println("Move a white object over one sensor at a time.");
-//   Serial.println("Watch which channel changes most.");
-//   Serial.println();
-
-//   // Check multiplexer
-//   Serial.print("Checking TCA9548A at 0x70... ");
-//   if (i2cDetect(TCA_ADDR)) {
-//     Serial.println("FOUND");
-//   } else {
-//     Serial.println("NOT FOUND");
-//     while (1) {}
-//   }
-
-//   // Check each channel for a TCS3472
-//   for (int i = 0; i < NUM_SENSORS; i++) {
-//     tcaSelect(i);
-
-//     Serial.print("Checking TCS3472 on CH");
-//     Serial.print(i);
-//     Serial.print("... ");
-
-//     if (i2cDetect(TCS_ADDR)) {
-//       Serial.println("FOUND");
-
-//       if (!tcs.begin(TCS_ADDR, &Wire1)) {
-//         Serial.print("BUT tcs.begin() FAILED on CH");
-//         Serial.println(i);
-//       }
-//     } else {
-//       Serial.println("NOT FOUND");
-//     }
-//   }
-
-//   Serial.println();
-//   Serial.println("Start testing...");
-//   Serial.println();
-// }
-
-// void loop() {
-//   uint16_t r, g, b, c;
-
-//   for (int i = 0; i < NUM_SENSORS; i++) {
-//     tcaSelect(i);
-
-//     if (!i2cDetect(TCS_ADDR)) {
-//       redValues[i] = 0;
-//       greenValues[i] = 0;
-//       blueValues[i] = 0;
-//       clearValues[i] = 0;
-//       continue;
-//     }
-
-//     tcs.getRawData(&r, &g, &b, &c);
-
-//     redValues[i] = r;
-//     greenValues[i] = g;
-//     blueValues[i] = b;
-//     clearValues[i] = c;
-//   }
-
-//   Serial.println("--------------------------------------------------");
-//   for (int i = 0; i < NUM_SENSORS; i++) {
-//     Serial.print("CH");
-//     Serial.print(i);
-//     Serial.print("   R: ");
-//     Serial.print(redValues[i]);
-//     Serial.print("   G: ");
-//     Serial.print(greenValues[i]);
-//     Serial.print("   B: ");
-//     Serial.print(blueValues[i]);
-//     Serial.print("   C: ");
-//     Serial.println(clearValues[i]);
-//   }
-
-//   Serial.println();
-//   delay(300);
-// }

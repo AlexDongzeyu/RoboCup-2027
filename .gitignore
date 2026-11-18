@@ -1,0 +1,15 @@
+# Local reference archives & OS/IDE metadata
+*.zip
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.history/
+
+# Arduino / Teensy build outputs
+build/
+*.hex
+*.elf
+*.lst
+*.sym
+*.eep
